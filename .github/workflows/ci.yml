@@ -4,6 +4,22 @@ on: [push, pull_request]
 jobs:
   check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bend
+          POSTGRES_PASSWORD: senha
+          POSTGRES_DB: bend
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPORT: 5432
     steps:
       - uses: actions/checkout@v4
       - name: instala o Bend
@@ -20,12 +36,16 @@ jobs:
         run: python3 wire_test.py
       - name: teste de ponta a ponta
         run: python3 http_test.py
+      - name: testes contra o Postgres
+        run: bend db_tests.bend
       - name: binario nativo
         run: |
           mkdir -p out
           bend tests.bend -o out/tests
+          bend db_tests.bend -o out/dbtests
           bend wire.bend -o out/wire
           bend example.bend -o out/app
           ./out/tests
+          ./out/dbtests
           python3 wire_test.py out/wire
           python3 http_test.py out/app

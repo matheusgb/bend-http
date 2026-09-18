@@ -246,3 +246,86 @@ def b64.dec.go(fuel: Nat, s: String) -> String:
 # Grupo incompleto no fim vira nada: base64 quebrado nao vira byte inventado.
 def b64.dec(+s: String) -> String:
   b64.dec.go(Nat.add(String.length(s), 1n), s)
+
+# SCRAM e linhas de resultado
+# ---------------------------
+
+def be16(s: String) -> U32:
+  be32.go(String.take(s, 2n), 0)
+
+# XOR byte a byte, que e como o SCRAM fecha a prova do cliente.
+def xor(a: String, b: String) -> String:
+  match a b:
+    case SNil{} _:
+      SNil{}
+    case SCon{x, xt} SNil{}:
+      SNil{}
+    case SCon{x, xt} SCon{y, yt}:
+      SCon{Chr{U32.xor(Char.to_u32(x), Char.to_u32(y))}, xor(xt, yt)}
+
+# O valor do campo que comeca com a chave, dentro de "r=...,s=...,i=...".
+def field.at(hit: Bool, +item: String, +key: String, rest: String) -> String:
+  match hit:
+    case True{}:
+      String.drop(item, String.length(key))
+    case False{}:
+      rest
+
+def field(ls: List<&2, String>, +key: String) -> String:
+  match ls:
+    case Nil{}:
+      ""
+    case Con{+item, t}:
+      field.at(String.starts_with(item, key), item, key, field(t, key))
+
+def iters.at(m: Maybe<&2, U32>) -> U32:
+  match m:
+    case None{}:
+      4096
+    case Some{n}:
+      n
+
+# Uma coluna: 4 bytes de tamanho e o valor. Tamanho 0xFFFFFFFF e NULL, que a
+# v1 entrega como texto vazio.
+def col.cut(+want: Nat, +s: String,
+  rest: String -> List<&2, String>) -> List<&2, String>:
+  String.take(String.drop(s, 4n), want)
+    <> rest(String.drop(s, Nat.add(4n, want)))
+
+def col.at(is_null: Bool, +s: String,
+  rest: String -> List<&2, String>) -> List<&2, String>:
+  match is_null:
+    case True{}:
+      "" <> rest(String.drop(s, 4n))
+    case False{}:
+      col.cut(U32.to_nat(be32(s)), s, rest)
+
+def cols.go(n: Nat, +s: String) -> List<&2, String>:
+  match n:
+    case 0n:
+      Nil{}
+    case 1n++p:
+      col.at(U32.is_eq(be32(s), 4294967295), s, r => cols.go(p, r))
+
+# Uma linha de resultado: 2 bytes com o numero de colunas, depois as colunas.
+def row(+body: String) -> List<&2, String>:
+  cols.go(U32.to_nat(be16(body)), String.drop(body, 2n))
+
+# O texto do erro que o Postgres manda: campos com tag de 1 byte, terminados
+# em zero. O campo M e a mensagem legivel.
+def errtext.at(hit: Bool, +item: String, rest: String) -> String:
+  match hit:
+    case True{}:
+      String.drop(item, 1n)
+    case False{}:
+      rest
+
+def errtext.go(ls: List<&2, String>) -> String:
+  match ls:
+    case Nil{}:
+      "erro do Postgres sem texto"
+    case Con{+item, t}:
+      errtext.at(String.starts_with(item, "M"), item, errtext.go(t))
+
+def errtext(body: String) -> String:
+  errtext.go(String.split(body, Chr{0}))

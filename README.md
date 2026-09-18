@@ -30,6 +30,7 @@ bend tests.bend                                    # testes puros
 bend PROOF.bend                                    # provas
 python3 wire_test.py                               # teste de fio
 python3 http_test.py                               # teste de ponta a ponta
+bend db_tests.bend                                 # testes contra o Postgres
 bend example.bend                                  # sobe o exemplo na 8080
 bend example.bend -o out/app                       # binario nativo, precisa de clang
 ```
@@ -50,6 +51,39 @@ bend example.bend -o out/app                       # binario nativo, precisa de 
 - O Bend não tem ferramenta de cobertura. O CI checa que todo `def` público
   aparece em `tests.bend`. Isso é cobertura de nome, não de caminho: garante que
   nenhuma função pública ficou sem teste, não que todo ramo foi exercitado.
+
+## Consultar o Postgres
+
+`Db.connect` faz login SCRAM-SHA-256. `Db.query` usa o protocolo simples e
+devolve `List<&2, List<&2, String>>`: linha por linha, coluna por coluna, tudo
+em texto. `NULL` volta como texto vazio, e a v1 não separa os dois. Erro do
+servidor vira `Fail` com a mensagem dele, e a conexão continua utilizável.
+
+Veja a rota `/agora` em `example.bend`. Para rodar os testes do banco:
+
+```bash
+docker run -d -e POSTGRES_PASSWORD=senha -e POSTGRES_USER=bend \
+  -e POSTGRES_DB=bend -p 55432:5432 postgres:16
+bend db_tests.bend
+```
+
+`PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD` e `PGDATABASE` mudam o alvo.
+
+## Byte, não caractere
+
+`String` nesta biblioteca é sequência de byte, um char por byte. O `String` do
+Bend é sequência de codepoint. Para ASCII os dois coincidem; para o resto, não.
+
+Passe todo texto com acento por `Raw.utf8` antes de mandar:
+
+```python
+Db.query(conn, Raw.utf8("select 'ação'"))
+Http.text(200, Raw.utf8("não achei"))
+```
+
+Sem isso, o `ç` sai como um byte só, e o Postgres recusa a query. O caminho de
+volta, byte UTF-8 para codepoint, ainda não existe: ele nasce quando alguma
+rota precisar olhar caractere de um corpo acentuado.
 
 ## Escrever um handler
 

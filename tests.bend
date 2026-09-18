@@ -5,6 +5,7 @@ import Base
 import ./http.bend as Http
 import ./pg.bend as Pg
 import ./crypto.bend as Crypto
+import ./raw.bend as Raw
 
 def check(name: String, ok: Bool) -> IO(Unit):
   match ok:
@@ -275,6 +276,28 @@ def test_crypto() -> IO(Unit):
     check("nonce: devolve o tamanho pedido",
       Nat.is_eq(String.length(i), 18n))
 
+# UTF-8: codepoint vira byte
+# --------------------------
+
+def test_utf8() -> IO(Unit):
+  do IO<Unit>:
+    check("utf8: ASCII nao muda", String.eq(Raw.utf8("abc"), "abc"))
+    check("utf8: cedilha vira dois bytes",
+      String.eq(Raw.utf8(SCon{Chr{231}, SNil{}}),
+        SCon{Chr{195}, SCon{Chr{167}, SNil{}}}))
+    check("utf8: o til do a vira dois bytes",
+      String.eq(Raw.utf8(SCon{Chr{227}, SNil{}}),
+        SCon{Chr{195}, SCon{Chr{163}, SNil{}}}))
+    check("utf8: o euro vira tres bytes",
+      String.eq(Raw.utf8(SCon{Chr{8364}, SNil{}}),
+        SCon{Chr{226}, SCon{Chr{130}, SCon{Chr{172}, SNil{}}}}))
+    check("utf8: emoji vira quatro bytes",
+      String.eq(Raw.utf8(SCon{Chr{128512}, SNil{}}),
+        SCon{Chr{240}, SCon{Chr{159}, SCon{Chr{152}, SCon{Chr{128},
+          SNil{}}}}}))
+    check("utf8: o tamanho em byte e maior que o tamanho em char",
+      Nat.is_eq(String.length(Raw.utf8(SCon{Chr{231}, "ao"})), 4n))
+
 def main() -> IO(Unit):
   do IO<Unit>:
     test_parse()
@@ -283,3 +306,4 @@ def main() -> IO(Unit):
     test_pg_frame()
     test_b64()
     test_crypto()
+    test_utf8()
