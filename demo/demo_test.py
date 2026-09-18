@@ -27,6 +27,17 @@ def get(caminho):
         return json.loads(r.read())
 
 
+def status(metodo, caminho, dados=None):
+    """Devolve o codigo, sem explodir no 4xx."""
+    corpo = urllib.parse.urlencode(dados).encode() if dados else None
+    req = urllib.request.Request(BASE + caminho, corpo, method=metodo)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+
+
 falhou = []
 
 
@@ -86,6 +97,13 @@ try:
     check("injecao de SQL entra como dado", inj[0]["titulo"] == ataque, inj)
     check("a tabela continua de pe depois da tentativa",
           any(t["titulo"] == ataque for t in get("/tarefas")))
+
+    check("id que nao e numero da 400, nao 500",
+          status("GET", "/tarefas/abc") == 400)
+    check("POST sem titulo da 400",
+          status("POST", "/tarefas", {"outro": "1"}) == 400)
+    check("id numerico que nao existe da lista vazia",
+          get("/tarefas/999999") == [])
 finally:
     servidor.kill()
 

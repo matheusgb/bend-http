@@ -38,6 +38,9 @@ curl localhost:8090/tarefas
 curl localhost:8090/tarefas/1
 ```
 
+Pedido torto responde 400, não 500: id que não é número e `POST` sem título
+param antes do banco.
+
 ```json
 [{"id":"1","titulo":"comprar pao","feito":"f"}]
 ```
@@ -67,6 +70,7 @@ mkdir -p out && bend agenda.bend -o out/agenda && ./out/agenda
 | Escapar valor para o SQL | `Pg.lit(...)` |
 | Escapar texto para o JSON | `Http.jstr(...)` |
 | Conexão por request | `run` em `agenda.bend` |
+| Validar antes de ir ao banco | `ver.at` e `criar.at` em `agenda.bend` |
 
 A biblioteca não tem pool de conexão: `run` abre, pergunta e fecha. Para carga
 de verdade, é o primeiro lugar a mexer.

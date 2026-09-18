@@ -112,14 +112,34 @@ def json.res(res: Result<&1, &1, Db.Err(), Db.Table()>) -> Http.Res:
 def listar(+r: Http.Req) -> IO(Http.Res):
   run("select id, titulo, feito from tarefa order by id", json.res)
 
+def erro(code: U32, msg: String) -> Http.Res:
+  Http.json(code, "{\"erro\":" ++ Http.jstr(msg) ++ "}")
+
+# Id que nao e numero nem chega ao banco: o erro e do pedido, nao do Postgres.
+def ver.at(m: Maybe<&2, U32>) -> IO(Http.Res):
+  match m:
+    case None{}:
+      IO.pure(Http.Res, erro(400, "id precisa ser numero"))
+    case Some{n}:
+      run("select id, titulo, feito from tarefa where id = " ++ U32.show(n),
+        json.res)
+
 def ver(+r: Http.Req) -> IO(Http.Res):
-  run("select id, titulo, feito from tarefa where id = "
-    ++ Pg.lit(Http.param(r, "id")) ++ "::int", json.res)
+  ver.at(U32.read(Http.param(r, "id")))
+
+def criar.at(vazio: Bool, +titulo: String) -> IO(Http.Res):
+  match vazio:
+    case True{}:
+      IO.pure(Http.Res, erro(400, "titulo e obrigatorio"))
+    case False{}:
+      run("insert into tarefa (titulo) values (" ++ Pg.lit(titulo)
+        ++ ") returning id, titulo, feito", json.res)
+
+def criar.go(+titulo: String) -> IO(Http.Res):
+  criar.at(String.is_empty(titulo), titulo)
 
 def criar(+r: Http.Req) -> IO(Http.Res):
-  run("insert into tarefa (titulo) values ("
-    ++ Pg.lit(Http.form(Http.body(r), "titulo"))
-    ++ ") returning id, titulo, feito", json.res)
+  criar.go(Http.form(Http.body(r), "titulo"))
 
 def routes() -> List<&1, Http.Route>:
   [Http.get("/tarefas", listar),
