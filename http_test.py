@@ -24,16 +24,38 @@ CASES = [
      [b"POST /echo HTTP/1.1\r\nHost: x\r\ncontent-length: 5\r\n\r\nab",
       b"cde"],
      b"HTTP/1.1 201 Created", b"recebi: abcde"),
+    # Os dois tetos do servidor. Sem eles, cada conexao aberta poderia comer a
+    # memoria que quisesse.
+    # Content-length grande e o ataque barato: o cliente promete 2 MB e manda
+    # 1 byte. O servidor nao pode ficar esperando nem alocando por isso.
+    ("corpo maior que o teto",
+     [b"POST /echo HTTP/1.1\r\nHost: x\r\ncontent-length: 2000000\r\n\r\nx"],
+     b"HTTP/1.1 400 Bad Request", b"request invalida"),
+    ("cabecalho que nao termina",
+     [b"GET / HTTP/1.1\r\n" + b"x-lixo: yyyy\r\n" * 4000],
+     b"HTTP/1.1 400 Bad Request", b"request invalida"),
+    ("corpo grande dentro do teto",
+     [b"POST /echo HTTP/1.1\r\nHost: x\r\ncontent-length: 200000\r\n\r\n"
+      + b"z" * 200000],
+     b"HTTP/1.1 201 Created", b"z" * 32),
+    ("dois content-length nao passam",
+     [b"POST /echo HTTP/1.1\r\nHost: x\r\ncontent-length: 1\r\n"
+      b"content-length: 5\r\n\r\nx"],
+     b"HTTP/1.1 400 Bad Request", b"request invalida"),
 ]
 
 
 def ask(parts):
     """Manda a request em pedacos e le tudo que voltar."""
     s = socket.create_connection(("127.0.0.1", PORT), timeout=10)
-    for part in parts:
-        s.sendall(part)
-        if len(parts) > 1:
-            time.sleep(0.2)
+    try:
+        for part in parts:
+            s.sendall(part)
+            if len(parts) > 1:
+                time.sleep(0.2)
+    except (BrokenPipeError, ConnectionResetError):
+        # O servidor cortou a leitura por estourar o teto: e o que se espera.
+        pass
     out = b""
     while True:
         got = s.recv(4096)

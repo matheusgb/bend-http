@@ -111,56 +111,111 @@ def sasl.first(conn: Conn, +bare: String,
           ++ "n,," ++ bare),
         s => rest(s)(buf)(bare))
 
-def sasl.start(conn: Conn, raw: String,
+def sasl.got(ok: Bool, conn: Conn, raw: String,
   rest: Socket -> String -> String -> IO(Login())) -> IO(Login()):
-  sasl.first(conn, "n=,r=" ++ Pg.b64.enc(raw), rest)
+  match ok:
+    case True{}:
+      sasl.first(conn, "n=,r=" ++ Pg.b64.enc(raw), rest)
+    case False{}:
+      fail.shut(Conn, 1,
+        "o sistema nao deu numero aleatorio para o nonce do SCRAM", conn)
+
+# Nonce curto quer dizer que /dev/urandom falhou. Byte zero passaria calado
+# por aleatorio, entao aqui o login para.
+def sasl.start(conn: Conn, +raw: String,
+  rest: Socket -> String -> String -> IO(Login())) -> IO(Login()):
+  sasl.got(Nat.is_eq(String.length(raw), 18n), conn, raw, rest)
 
 # SCRAM, segundo passo: a prova, que e ClientKey xor HMAC(StoredKey, mensagem).
-def sasl.send(conn: Conn, final: String,
+def sasl.send(conn: Conn, final: String, expect: String,
   rest: Socket -> String -> String -> IO(Login())) -> IO(Login()):
   match conn:
     case Conn{sock, buf}:
-      push(Login(), sock, Pg.frame('p', final), s => rest(s)(buf)(""))
+      push(Login(), sock, Pg.frame('p', final), s => rest(s)(buf)(expect))
 
 def sasl.proof(conn: Conn, +cfinal: String, ckey: String, csig: String,
-  rest: Socket -> String -> String -> IO(Login())) -> IO(Login()):
-  sasl.send(conn, cfinal ++ ",p=" ++ Pg.b64.enc(Pg.xor(ckey, csig)), rest)
+  expect: String, rest: Socket -> String -> String -> IO(Login())) ->
+  IO(Login()):
+  sasl.send(conn, cfinal ++ ",p=" ++ Pg.b64.enc(Pg.xor(ckey, csig)), expect,
+    rest)
 
-def sasl.keys(conn: Conn, +cfirst: String, +sfirst: String, +pass: String,
+# ClientProof prova ao servidor que o cliente sabe a senha. ServerSignature faz
+# o caminho contrario, e e por isso que ela e calculada aqui: sem conferir a
+# assinatura do servidor, qualquer um no meio do caminho termina o handshake.
+def sasl.keys.go(conn: Conn, +cfirst: String, +sfirst: String, +pass: String,
   rest: Socket -> String -> String -> IO(Login())) -> IO(Login()):
   do IO<Login()>:
-    salted : String <- Crypto.pbkdf2(pass,
+    +rnonce : String = Pg.field(String.split(sfirst, ','), "r=")
+    +auth : String = cfirst ++ "," ++ sfirst ++ ",c=biws,r=" ++ rnonce
+    +salted : String <- Crypto.pbkdf2(pass,
       Pg.b64.dec(Pg.field(String.split(sfirst, ','), "s=")),
       Pg.iters.at(U32.read(Pg.field(String.split(sfirst, ','), "i="))))
     +ckey : String <- Crypto.hmac256(salted, "Client Key")
     skey : String <- Crypto.sha256(ckey)
-    csig : String <- Crypto.hmac256(skey,
-      cfirst ++ "," ++ sfirst ++ ",c=biws,r="
-        ++ Pg.field(String.split(sfirst, ','), "r="))
-    sasl.proof(conn,
-      "c=biws,r=" ++ Pg.field(String.split(sfirst, ','), "r="), ckey, csig,
+    csig : String <- Crypto.hmac256(skey, auth)
+    server : String <- Crypto.hmac256(salted, "Server Key")
+    ssig : String <- Crypto.hmac256(server, auth)
+    sasl.proof(conn, "c=biws,r=" ++ rnonce, ckey, csig, Pg.b64.enc(ssig),
       rest)
 
-# Qual autenticacao o Postgres pediu.
-def auth.pick(ok: Bool, sasl: Bool, cont: Bool, conn: Conn, body: String,
-  +pass: String, +cfirst: String,
+def sasl.keys.at(ours: Bool, conn: Conn, cfirst: String, sfirst: String,
+  pass: String, rest: Socket -> String -> String -> IO(Login())) ->
+  IO(Login()):
+  match ours:
+    case True{}:
+      sasl.keys.go(conn, cfirst, sfirst, pass, rest)
+    case False{}:
+      fail.shut(Conn, 1,
+        "o servidor trocou o nonce do SCRAM: ele tem que continuar o do cliente",
+        conn)
+
+# A RFC 5802 manda o servidor devolver o nonce do cliente como prefixo do dele.
+# Sem essa checagem, uma resposta gravada de outra sessao passaria.
+def sasl.keys(conn: Conn, +cfirst: String, +sfirst: String, +pass: String,
   rest: Socket -> String -> String -> IO(Login())) -> IO(Login()):
-  match ok sasl cont:
-    case True{} _ _:
+  sasl.keys.at(String.starts_with(Pg.field(String.split(sfirst, ','), "r="),
+    Pg.field(String.split(cfirst, ','), "r=")), conn, cfirst, sfirst, pass,
+    rest)
+
+def sasl.check(ok: Bool, conn: Conn,
+  rest: Socket -> String -> String -> IO(Login())) -> IO(Login()):
+  match ok:
+    case True{}:
+      conn.go(conn, "", rest)
+    case False{}:
+      fail.shut(Conn, 1,
+        "o servidor nao provou que sabe a senha: assinatura do SCRAM errada",
+        conn)
+
+# A assinatura vazia quer dizer que o servidor pulou o passo da prova.
+def sasl.final(conn: Conn, +body: String, +expect: String,
+  rest: Socket -> String -> String -> IO(Login())) -> IO(Login()):
+  sasl.check(Bool.and(Bool.not(String.is_empty(expect)),
+    String.eq(Pg.field(String.split(String.drop(body, 4n), ','), "v="),
+      expect)), conn, rest)
+
+# Qual autenticacao o Postgres pediu.
+def auth.pick(ok: Bool, sasl: Bool, cont: Bool, fin: Bool, conn: Conn,
+  +body: String, +pass: String, +cfirst: String,
+  rest: Socket -> String -> String -> IO(Login())) -> IO(Login()):
+  match ok sasl cont fin:
+    case True{} _ _ _:
       conn.go(conn, cfirst, rest)
-    case False{} True{} _:
+    case False{} True{} _ _:
       IO.bind(String, Login(), Crypto.nonce(18),
         raw => sasl.start(conn, raw, rest))
-    case False{} False{} True{}:
+    case False{} False{} True{} _:
       sasl.keys(conn, cfirst, String.drop(body, 4n), pass, rest)
-    case False{} False{} False{}:
+    case False{} False{} False{} True{}:
+      sasl.final(conn, body, cfirst, rest)
+    case False{} False{} False{} False{}:
       conn.go(conn, cfirst, rest)
 
 def auth.at(+code: U32, conn: Conn, +body: String, +pass: String,
   +cfirst: String, rest: Socket -> String -> String -> IO(Login())) ->
   IO(Login()):
   auth.pick(U32.is_eq(code, 0), U32.is_eq(code, 10), U32.is_eq(code, 11),
-    conn, body, pass, cfirst, rest)
+    U32.is_eq(code, 12), conn, body, pass, cfirst, rest)
 
 def auth.no(supported: Bool, +code: U32, conn: Conn, body: String,
   +pass: String, +cfirst: String,

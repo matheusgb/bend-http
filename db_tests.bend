@@ -7,6 +7,7 @@
 import Base
 import ./raw.bend as Raw
 import ./db.bend as Db
+import ./pg.bend as Pg
 
 def check(name: String, ok: Bool) -> IO(Unit):
   match ok:
@@ -96,7 +97,13 @@ def suite(conn: Db.Conn) -> IO(Unit):
               ask.err("db: sql quebrado vira erro, nao linha", c6,
                 "select nao_existe", "nao_existe", c7 =>
                 ask("db: a conexao continua boa depois do erro", c7,
-                  "select 7", "7;", c8 => Db.close(c8)))))))))
+                  "select 7", "7;", c8 =>
+                  ask("db: lit devolve o texto com aspa, nao comando", c8,
+                    "select " ++ Pg.lit("o'brien"), "o'brien;", c9 =>
+                    ask("db: injecao dentro de lit fica dado, nao sql", c9,
+                      "select " ++ Pg.lit("x'; drop table nao_existe; --"),
+                      "x'; drop table nao_existe; --;",
+                      c10 => Db.close(c10)))))))))))
 
 def logged(r: Result<&1, &1, Db.Err(), Db.Conn>) -> IO(Unit):
   match r:

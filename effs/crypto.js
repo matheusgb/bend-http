@@ -37,7 +37,13 @@ function pbkdf2(pass, salt, iters) {
     "sha256"));
 }
 
+// Sem aleatorio do sistema, volta vazio: quem chama compara o tamanho antes
+// de usar, e byte zero nao passa por nonce.
 function nonce(n) {
-  const c = require("node:crypto");
-  return cry_text(c.randomBytes(Number(n)));
+  try {
+    const c = require("node:crypto");
+    return cry_text(c.randomBytes(Number(n)));
+  } catch (err) {
+    return "";
+  }
 }

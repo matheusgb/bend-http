@@ -138,7 +138,7 @@ static void cry_hmac(const uint8_t* key, u64 kn, const uint8_t* msg, u64 mn,
 // PBKDF2-HMAC-SHA-256 com saida de 32 bytes, ou seja, um bloco so.
 static void cry_pbkdf2(const uint8_t* pw, u64 pn, const uint8_t* salt, u64 sn,
   u32 iters, uint8_t out[32]) {
-  uint8_t* first = (uint8_t*)malloc(sn + 4);
+  uint8_t* first = (uint8_t*)io_mem(malloc(sn + 4));
   uint8_t  u[32];
   for (u64 i = 0; i < sn; i += 1) {
     first[i] = salt[i];
@@ -231,7 +231,9 @@ Term pbkdf2_run(Env en, Term* f, IoWork* w) {
   return cry_str(en, out, 32);
 }
 
-// O nonce do SCRAM precisa ser imprevisivel, entao ele vem do sistema.
+// O nonce do SCRAM precisa ser imprevisivel, entao ele vem do sistema. Sem
+// /dev/urandom, ele volta vazio: byte zero passaria calado por aleatorio, e
+// quem chama compara o tamanho antes de usar.
 Term nonce_run(Env en, Term* f, IoWork* w) {
   u64      n   = (u64)f[0];
   uint8_t* buf = io_mem(malloc(n + 1));
@@ -240,11 +242,7 @@ Term nonce_run(Env en, Term* f, IoWork* w) {
   if (src != NULL) {
     fclose(src);
   }
-  while (got < n) {
-    buf[got] = 0;
-    got += 1;
-  }
-  Term r = cry_str(en, buf, n);
+  Term r = cry_str(en, buf, got < n ? 0 : n);
   free(buf);
   return r;
 }

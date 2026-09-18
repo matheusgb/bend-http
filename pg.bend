@@ -73,9 +73,18 @@ def take.at(fits: Bool, want: Nat, buf: String, tag: Char) ->
     case False{}:
       None{}
 
+# Tamanho declarado menor que 4 e mensagem quebrada, nao mensagem curta: os 4
+# bytes do proprio tamanho ja nao caberiam. Nesse caso nao existe mensagem.
+def take.ok(sane: Bool, +want: Nat, +buf: String, tag: Char) ->
+  Maybe<&2, Taken>:
+  match sane:
+    case True{}:
+      take.at(Nat.is_ge(String.length(buf), want), want, buf, tag)
+    case False{}:
+      None{}
+
 def take.len(+buf: String, tag: Char) -> Maybe<&2, Taken>:
-  take.at(Nat.is_ge(String.length(buf),
-    Nat.add(U32.to_nat(be32(String.drop(buf, 1n))), 1n)),
+  take.ok(Nat.is_ge(Nat.add(U32.to_nat(be32(String.drop(buf, 1n))), 1n), 5n),
     Nat.add(U32.to_nat(be32(String.drop(buf, 1n))), 1n), buf, tag)
 
 def take(buf: String) -> Maybe<&2, Taken>:
@@ -329,3 +338,39 @@ def errtext.go(ls: List<&2, String>) -> String:
 
 def errtext(body: String) -> String:
   errtext.go(String.split(body, Chr{0}))
+
+# Literal de SQL
+# --------------
+#
+# A v1 nao tem prepared statement, entao a query vai montada em texto. Isso
+# joga o risco de injecao para quem usa a biblioteca. lit fecha esse buraco
+# para o caso comum: valor de texto dentro da query.
+#
+# A regra e a do Postgres com standard_conforming_strings ligado, que e o
+# padrao desde a versao 9.1: dentro de aspas simples, a unica coisa que escapa
+# e a propria aspa, dobrada. O byte zero sai fora, porque ele terminaria a
+# query no meio: o protocolo manda o texto terminado em zero.
+
+def lit.push(quote: Bool, +c: Char, acc: String) -> String:
+  match quote:
+    case True{}:
+      SCon{c, SCon{c, acc}}
+    case False{}:
+      SCon{c, acc}
+
+def lit.keep(nul: Bool, +c: Char, acc: String) -> String:
+  match nul:
+    case True{}:
+      acc
+    case False{}:
+      lit.push(Char.is_eq(c, '\''), c, acc)
+
+def lit.go(s: String, acc: String) -> String:
+  match s:
+    case SNil{}:
+      String.reverse(acc)
+    case SCon{+c, t}:
+      lit.go(t, lit.keep(U32.is_eq(Char.to_u32(c), 0), c, acc))
+
+def lit(s: String) -> String:
+  "'" ++ lit.go(s, SNil{}) ++ "'"

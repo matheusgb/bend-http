@@ -20,7 +20,8 @@ Estado: em construção. Nada aqui é estável ainda.
 | Chunked encoding | A v1 exige `Content-Length`. |
 | Upload binário | `String` do Bend é lista de char. Corpo binário sai caro. |
 | Pool de conexão | Uma conexão por processo. Pool quando alguém medir a falta. |
-| Prepared statement | O protocolo simples já cobre `SELECT` e `INSERT`. |
+| Prepared statement | O protocolo simples já cobre `SELECT` e `INSERT`. Use `Pg.lit` para escapar valor de texto. |
+| Keep-alive | Uma request por conexão. |
 
 ## Rodar
 
@@ -68,6 +69,45 @@ bend db_tests.bend
 ```
 
 `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD` e `PGDATABASE` mudam o alvo.
+
+## Injeção de SQL
+
+A v1 monta query em texto, sem bind de parâmetro. O risco de injeção é seu.
+`Pg.lit` cobre o caso comum, que é valor de texto dentro da query:
+
+```python
+Db.query(conn, "select * from conta where dono = " ++ Pg.lit(nome))
+```
+
+`lit` põe o texto entre aspas simples, dobra a aspa de dentro e descarta o
+byte zero, que cortaria a query no meio. A regra vale com
+`standard_conforming_strings` ligado, que é o padrão do Postgres desde a 9.1.
+
+`lit` não serve para nome de tabela, nome de coluna nem pedaço de comando.
+Para isso, não monte SQL com dado de fora.
+
+## Limites do servidor
+
+| Limite | Valor | Por quê |
+| --- | --- | --- |
+| Cabeçalho | 8 KB | `String.lines` da Base estoura a pilha perto de 50 KB. 8 KB é o mesmo teto do nginx. |
+| Request inteira | 1 MB | Acima disso é cliente enchendo memória, não request. |
+| Leituras por conexão | 1024 | Cliente que abre e não termina a request não prende o processo. |
+
+Passar de qualquer um deles devolve 400. Dois `content-length` ou
+`transfer-encoding` também devolvem 400: divergência entre o proxy da frente e
+este parser é a porta do request smuggling.
+
+## O que o SCRAM verifica
+
+`Db.connect` recusa o servidor que:
+
+- devolve assinatura errada no `SASLFinal`, ou seja, não prova que conhece a
+  senha;
+- devolve um nonce que não começa com o nonce do cliente.
+
+`scram_test.py` sobe um Postgres falso que tenta os dois, e um terceiro caso
+que joga limpo, para o teste não passar por acidente.
 
 ## Byte, não caractere
 

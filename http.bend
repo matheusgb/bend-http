@@ -60,21 +60,26 @@ def head.put(m: Map<&2, String>, p: String & String) -> Map<&2, String>:
       Map.set(&2, String, m, name, value)
 
 # Corta no primeiro \r\n\r\n: cabecalho antes, corpo depois, byte a byte.
-def cut2.at(hit: Bool, h: Char, t: String, rest: String & String) ->
-  String & String:
+# Acumulador de novo, e pelo mesmo motivo do brk: montar o prefixo na volta
+# empilha um quadro por byte do corpo.
+def cut2.step(hit: Bool, h: Char, t: String, +acc: String,
+  rest: String -> String & String) -> String & String:
   match hit:
     case True{}:
-      (SNil{}, String.drop(t, 3n))
+      (String.reverse(acc), String.drop(t, 3n))
     case False{}:
-      cut.push(h, rest)
+      rest(SCon{h, acc})
 
-def cut2(s: String) -> String & String:
+def cut2.go(s: String, +acc: String) -> String & String:
   match s:
     case SNil{}:
-      (SNil{}, SNil{})
+      (String.reverse(acc), SNil{})
     case SCon{+h, +t}:
-      cut2.at(String.starts_with(SCon{h, t}, "\r\n\r\n"), h, t,
-        cut2(t))
+      cut2.step(String.starts_with(SCon{h, t}, "\r\n\r\n"), h, t, acc,
+        a => cut2.go(t, a))
+
+def cut2(s: String) -> String & String:
+  cut2.go(s, SNil{})
 
 # Le as linhas ate a linha vazia. O corpo nao passa por aqui.
 def heads(ls: List<&2, String>, m: Map<&2, String>) -> Map<&2, String>:
@@ -110,14 +115,47 @@ def line(parts: List<&2, String>, m: Map<&2, String>, body: String) ->
     case Con{method, rest}:
       line.target(method, rest, m, body)
 
+# Contagem de cabecalho pelo nome, para recusar o que vem repetido.
+def name.of(l: String) -> String:
+  String.to_lower(String.trim(Pair.fst(String, String, cut(uncr(l), ':'))))
+
+def count.at(hit: Bool, rest: Nat) -> Nat:
+  match hit:
+    case True{}:
+      1n+rest
+    case False{}:
+      rest
+
+def count(ls: List<&2, String>, +key: String) -> Nat:
+  match ls:
+    case Nil{}:
+      0n
+    case Con{l, t}:
+      count.at(String.eq(name.of(l), key), count(t, key))
+
+# Dois content-length com valores diferentes sao a porta de entrada do request
+# smuggling: o proxy da frente acredita em um, e o servidor de tras no outro.
+# transfer-encoding a v1 nao faz, e fingir que fez seria o mesmo buraco.
+def suspect(+ls: List<&2, String>) -> Bool:
+  Bool.or(Nat.is_gt(count(ls, "content-length"), 1n),
+    Nat.is_gt(count(ls, "transfer-encoding"), 0n))
+
+def parse.ok(bad: Bool, first: String, rest: List<&2, String>,
+  body: String) -> Maybe<&2, Req>:
+  match bad:
+    case True{}:
+      None{}
+    case False{}:
+      line(String.split(uncr(first), ' '), heads(rest, Map.new(&2, String)),
+        body)
+
 # Cabecalho e corpo, separados pela linha vazia.
 def parse.head(ls: List<&2, String>, body: String) -> Maybe<&2, Req>:
   match ls:
     case Nil{}:
       None{}
-    case Con{first, rest}:
-      line(String.split(uncr(first), ' '),
-        heads(rest, Map.new(&2, String)), body)
+    case Con{first, +rest}:
+      parse.ok(suspect(rest), first, rest, body)
 
 def parse.split(p: String & String) -> Maybe<&2, Req>:
   match p:
@@ -333,3 +371,53 @@ def complete.at(has_break: Bool, raw: String) -> Bool:
 
 def complete(+raw: String) -> Bool:
   complete.at(String.contains(raw, "\r\n\r\n"), raw)
+
+# Onde termina o cabecalho, se ele ja chegou inteiro.
+# Com acumulador, de proposito: a versao que soma na volta empilha um quadro
+# por byte, e um cabecalho de 50 KB derruba o runtime.
+def brk.step(hit: Bool, i: Nat, rest: Nat -> Maybe<&2, Nat>) ->
+  Maybe<&2, Nat>:
+  match hit:
+    case True{}:
+      Some{i}
+    case False{}:
+      rest(1n+i)
+
+def brk.go(s: String, i: Nat) -> Maybe<&2, Nat>:
+  match s:
+    case SNil{}:
+      None{}
+    case SCon{+h, +t}:
+      brk.step(String.starts_with(SCon{h, t}, "\r\n\r\n"), i,
+        k => brk.go(t, k))
+
+def brk(s: String) -> Maybe<&2, Nat>:
+  brk.go(s, 0n)
+
+# Cabecalho suspeito nao ganha corpo: quem le para no fim do cabecalho, e o
+# parse recusa depois. Sem isso, dois content-length deixariam o servidor
+# esperando para sempre o corpo que o outro valor prometeu.
+def need.sane(bad: Bool, +i: Nat, ls: List<&2, String>) -> Maybe<&2, Nat>:
+  match bad:
+    case True{}:
+      Some{Nat.add(i, 4n)}
+    case False{}:
+      Some{Nat.add(Nat.add(i, 4n),
+        want_len(heads(ls, Map.new(&2, String))))}
+
+def need.len(+i: Nat, +raw: String) -> Maybe<&2, Nat>:
+  need.sane(suspect(String.lines(String.take(raw, i))), i,
+    String.lines(String.take(raw, i)))
+
+def need.at(m: Maybe<&2, Nat>, raw: String) -> Maybe<&2, Nat>:
+  match m:
+    case None{}:
+      None{}
+    case Some{i}:
+      need.len(i, raw)
+
+# Quantos bytes a request inteira tem. Enquanto o cabecalho nao fechou, nao da
+# para saber, e quem le precisa dessa resposta para nao ficar relendo o buffer
+# inteiro a cada pacote que chega.
+def need(+raw: String) -> Maybe<&2, Nat>:
+  need.at(brk(raw), raw)

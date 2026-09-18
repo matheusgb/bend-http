@@ -55,6 +55,13 @@ def got(m: Maybe<&2, Http.Req>, which: Nat, name: String) -> String:
     case Some{r}:
       field(r, which, name)
 
+def need.or(m: Maybe<&2, Nat>, d: Nat) -> Nat:
+  match m:
+    case None{}:
+      d
+    case Some{n}:
+      n
+
 def get_raw() -> String:
   "GET /users/7?x=1 HTTP/1.1\r\nHost: localhost:8080\r\nAccept: */*\r\n\r\n"
 
@@ -82,6 +89,20 @@ def test_parse() -> IO(Unit):
       String.eq(got(Http.parse(post_raw()), 3n, ""), "linha1\r\nlinha2"))
     check("parse: lixo nao vira request",
       String.eq(got(Http.parse(""), 0n, ""), "<nao parseou>"))
+    check("parse: dois content-length viram request invalida",
+      String.eq(got(Http.parse("GET / HTTP/1.1\r\ncontent-length: 1\r\n"
+        ++ "Content-Length: 9\r\n\r\nx"), 0n, ""), "<nao parseou>"))
+    check("parse: transfer-encoding vira request invalida, porque a v1 nao faz",
+      String.eq(got(Http.parse("GET / HTTP/1.1\r\ntransfer-encoding: chunked"
+        ++ "\r\n\r\n"), 0n, ""), "<nao parseou>"))
+    check("parse: um content-length so continua valido",
+      String.eq(got(Http.parse("POST / HTTP/1.1\r\ncontent-length: 1\r\n"
+        ++ "\r\nx"), 3n, ""), "x"))
+    check("need: sem o fim do cabecalho, nao da para saber o tamanho",
+      Nat.is_eq(need.or(Http.need("GET / HTT"), 0n), 0n))
+    check("need: com o cabecalho fechado, o tamanho e cabecalho mais corpo",
+      Nat.is_eq(need.or(Http.need("GET / HTTP/1.1\r\ncontent-length: 3"
+        ++ "\r\n\r\nabc"), 0n), 40n))
 
 def test_render() -> IO(Unit):
   do IO<Unit>:
@@ -214,6 +235,23 @@ def test_b64() -> IO(Unit):
       String.eq(Pg.b64.dec(Pg.b64.enc(bytes(256n, SNil{}))),
         bytes(256n, SNil{})))
 
+# Literal de SQL
+# --------------
+
+def test_lit() -> IO(Unit):
+  do IO<Unit>:
+    check("lit: texto simples vira texto entre aspas",
+      String.eq(Pg.lit("oi"), "'oi'"))
+    check("lit: aspa dentro do texto dobra",
+      String.eq(Pg.lit("o'brien"), "'o''brien'"))
+    check("lit: tentativa de fechar a string e virar comando nao escapa",
+      String.eq(Pg.lit("x'; drop table alvo; --"),
+        "'x''; drop table alvo; --'"))
+    check("lit: barra invertida fica como esta, que e a regra do Postgres",
+      String.eq(Pg.lit("c:\\tmp"), "'c:\\tmp'"))
+    check("lit: byte zero sai fora, senao ele cortaria a query no meio",
+      String.eq(Pg.lit(SCon{'a', SCon{Chr{0}, SCon{'b', SNil{}}}}), "'ab'"))
+
 # Cripto: vetores do NIST e das RFC 4231 e 7914
 # --------------------------------------------
 
@@ -254,6 +292,29 @@ def test_crypto() -> IO(Unit):
     c : String <- Crypto.sha256(rep(1000n, 'a', SNil{}))
     check("sha256: mil bytes, mais de um bloco", String.eq(hex(c),
       "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3"))
+    # As bordas do bloco de 64 bytes, que e onde implementacao de SHA erra.
+    b55 : String <- Crypto.sha256(rep(55n, 'a', SNil{}))
+    check("sha256: 55 bytes, o ultimo que cabe com o padding", String.eq(hex(b55),
+      "9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318"))
+    b56 : String <- Crypto.sha256(rep(56n, 'a', SNil{}))
+    check("sha256: 56 bytes, o primeiro que pede bloco extra",
+      String.eq(hex(b56),
+        "b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a"))
+    b64 : String <- Crypto.sha256(rep(64n, 'a', SNil{}))
+    check("sha256: 64 bytes, o bloco exato", String.eq(hex(b64),
+      "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb"))
+    b65 : String <- Crypto.sha256(rep(65n, 'a', SNil{}))
+    check("sha256: 65 bytes, um a mais que o bloco", String.eq(hex(b65),
+      "635361c48bb9eab14198e76ea8ab7f1a41685d6ad62aa9146d301d4f17eb0ae0"))
+    k64 : String <- Crypto.hmac256(rep(64n, 'k', SNil{}), "msg")
+    check("hmac256: chave do tamanho exato do bloco", String.eq(hex(k64),
+      "d62ad25bb128e96ab6ef43464aaf2bb91b5b85f013381e9ba6be747e8d0911b2"))
+    k65 : String <- Crypto.hmac256(rep(65n, 'k', SNil{}), "msg")
+    check("hmac256: chave de um byte acima do bloco", String.eq(hex(k65),
+      "c65585780e821bd312cfaa440c33cb28d6af6b323d4977ae83934834ce589e38"))
+    p0 : String <- Crypto.pbkdf2("pw", "", 1)
+    check("pbkdf2: salt vazio", String.eq(hex(p0),
+      "6a65192736d636be9f08743ea5a9e37cf93c2701cc689aac593a23a0a9df5677"))
     d : String <- Crypto.hmac256(rep(20n, Chr{11}, SNil{}), "Hi There")
     check("hmac256: caso 1 da RFC 4231", String.eq(hex(d),
       "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"))
@@ -305,5 +366,6 @@ def main() -> IO(Unit):
     test_router()
     test_pg_frame()
     test_b64()
+    test_lit()
     test_crypto()
     test_utf8()
