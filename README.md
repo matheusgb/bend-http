@@ -159,6 +159,12 @@ Db.query(conn, Raw.utf8("insert into t ..."       # ERRADO: encoda de novo o
 O caminho de volta, byte UTF-8 para codepoint, ainda não existe: ele nasce
 quando alguma rota precisar olhar caractere de um corpo acentuado.
 
+## Demo
+
+`demo/` tem um projeto completo: lista de tarefas com `GET` e `POST` no
+Postgres, do jeito que um projeto de fora monta em cima desta biblioteca.
+Comece por `demo/README.md`.
+
 ## Escrever um handler
 
 ```python

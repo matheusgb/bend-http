@@ -40,6 +40,10 @@ jobs:
         run: bend db_tests.bend
       - name: servidor falso de SCRAM
         run: python3 scram_test.py
+      - name: demo, do jeito que um projeto de fora usa a lib
+        run: |
+          ln -sfn .. demo/lib
+          cd demo && python3 demo_test.py
       - name: binario nativo
         run: |
           mkdir -p out
