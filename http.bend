@@ -238,6 +238,11 @@ def body(r: Req) -> String:
     case Req{method, path, query, hs, b, params}:
       b
 
+def query(r: Req) -> String:
+  match r:
+    case Req{method, path, q, hs, b, params}:
+      q
+
 def header(r: Req, name: String) -> String:
   match r:
     case Req{method, path, query, hs, b, params}:
@@ -421,3 +426,97 @@ def need.at(m: Maybe<&2, Nat>, raw: String) -> Maybe<&2, Nat>:
 # inteiro a cada pacote que chega.
 def need(+raw: String) -> Maybe<&2, Nat>:
   need.at(brk(raw), raw)
+
+# Campo de formulario e de query string
+# -------------------------------------
+#
+# Os dois usam o mesmo formato: chave=valor separado por &, com espaco virando
+# + e byte fora do ASCII virando %XX. form le um campo, no corpo ou na query.
+
+def hex.val.at(digito: Bool, minus: Bool, maius: Bool, +c: U32) -> U32:
+  match digito minus maius:
+    case True{} _ _:
+      U32.sub(c, 48)
+    case False{} True{} _:
+      U32.sub(c, 87)
+    case False{} False{} True{}:
+      U32.sub(c, 55)
+    case False{} False{} False{}:
+      0
+
+def hex.val.go(+c: U32) -> U32:
+  hex.val.at(Bool.and(U32.is_ge(c, 48), U32.is_le(c, 57)),
+    Bool.and(U32.is_ge(c, 97), U32.is_le(c, 102)),
+    Bool.and(U32.is_ge(c, 65), U32.is_le(c, 70)), c)
+
+def hex.val(c: Char) -> U32:
+  hex.val.go(Char.to_u32(c))
+
+def pct.byte(h1: Char, h2: Char) -> Char:
+  Chr{U32.add(U32.mul(hex.val(h1), 16), hex.val(h2))}
+
+# %XX sem os dois digitos e lixo: o que sobrou fica de fora.
+def unpct.two(h1: Char, t1: String, acc: String,
+  rest: String -> String -> String) -> String:
+  match t1:
+    case SNil{}:
+      String.reverse(acc)
+    case SCon{h2, t2}:
+      rest(t2)(SCon{pct.byte(h1, h2), acc})
+
+def unpct.one(t: String, acc: String, rest: String -> String -> String) ->
+  String:
+  match t:
+    case SNil{}:
+      String.reverse(acc)
+    case SCon{h1, t1}:
+      unpct.two(h1, t1, acc, rest)
+
+def unpct.at(pct: Bool, plus: Bool, c: Char, t: String, acc: String,
+  rest: String -> String -> String) -> String:
+  match pct plus:
+    case True{} _:
+      unpct.one(t, acc, rest)
+    case False{} True{}:
+      rest(t)(SCon{' ', acc})
+    case False{} False{}:
+      rest(t)(SCon{c, acc})
+
+def unpct.start(s: String, acc: String, rest: String -> String -> String) ->
+  String:
+  match s:
+    case SNil{}:
+      String.reverse(acc)
+    case SCon{+c, +t}:
+      unpct.at(Char.is_eq(c, '%'), Char.is_eq(c, '+'), c, t, acc, rest)
+
+# O fuel existe porque %XX anda tres passos de uma vez, e o checador de
+# terminacao pede um argumento que encolhe sozinho.
+def unpct.go(fuel: Nat, s: String, acc: String) -> String:
+  match fuel:
+    case 0n:
+      String.reverse(acc)
+    case 1n++f:
+      unpct.start(s, acc, u => a => unpct.go(f, u, a))
+
+def unpct(+s: String) -> String:
+  unpct.go(Nat.add(String.length(s), 1n), s, SNil{})
+
+def form.at(hit: Bool, +item: String, +name: String, rest: String) -> String:
+  match hit:
+    case True{}:
+      unpct(String.drop(item, Nat.add(String.length(name), 1n)))
+    case False{}:
+      rest
+
+def form.one(ls: List<&2, String>, +name: String) -> String:
+  match ls:
+    case Nil{}:
+      ""
+    case Con{+item, t}:
+      form.at(String.starts_with(item, name ++ "="), item, name,
+        form.one(t, name))
+
+# Campo ausente vira texto vazio: a v1 nao separa ausente de vazio.
+def form(s: String, +name: String) -> String:
+  form.one(String.split(s, '&'), name)

@@ -70,6 +70,18 @@ bend db_tests.bend
 
 `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD` e `PGDATABASE` mudam o alvo.
 
+## Ler campo do corpo e da query
+
+`Http.form` lê um campo no formato `chave=valor&chave=valor`, desfazendo `+` e
+`%XX`. Serve para o corpo de um formulário e para a query string:
+
+```python
+Http.form(Http.body(r), "titulo")
+Http.form(Http.query(r), "pagina")
+```
+
+Campo ausente e campo vazio dão a mesma resposta: texto vazio.
+
 ## Injeção de SQL
 
 A v1 monta query em texto, sem bind de parâmetro. O risco de injeção é seu.

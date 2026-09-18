@@ -55,6 +55,13 @@ def got(m: Maybe<&2, Http.Req>, which: Nat, name: String) -> String:
     case Some{r}:
       field(r, which, name)
 
+def query.of(m: Maybe<&2, Http.Req>) -> String:
+  match m:
+    case None{}:
+      "<nao parseou>"
+    case Some{r}:
+      Http.query(r)
+
 def need.or(m: Maybe<&2, Nat>, d: Nat) -> Nat:
   match m:
     case None{}:
@@ -114,6 +121,39 @@ def test_render() -> IO(Unit):
       String.eq(Http.render(Http.Res{799, [], ""}),
         "HTTP/1.1 799 Status\r\ncontent-length: 0\r\n\r\n"))
 
+
+# Formulario e query string
+# -------------------------
+
+def test_form() -> IO(Unit):
+  do IO<Unit>:
+    check("form: campo simples",
+      String.eq(Http.form("titulo=oi&feito=nao", "titulo"), "oi"))
+    check("form: segundo campo",
+      String.eq(Http.form("titulo=oi&feito=nao", "feito"), "nao"))
+    check("form: mais vira espaco",
+      String.eq(Http.form("titulo=comprar+pao", "titulo"), "comprar pao"))
+    check("form: %XX vira byte",
+      String.eq(Http.form("titulo=a%2Cb", "titulo"), "a,b"))
+    check("form: byte alto de utf8 atravessa inteiro",
+      String.eq(Http.form("t=a%C3%A7%C3%A3o", "t"),
+        SCon{'a', SCon{Chr{195}, SCon{Chr{167}, SCon{Chr{195},
+          SCon{Chr{163}, "o"}}}}}))
+    check("form: %XX em maiuscula e minuscula dao o mesmo byte",
+      String.eq(Http.form("t=%2c", "t"), Http.form("t=%2C", "t")))
+    check("form: campo que nao existe vira vazio",
+      String.eq(Http.form("titulo=oi", "outro"), ""))
+    check("form: campo com nome prefixo de outro nao confunde",
+      String.eq(Http.form("titulo_longo=x&titulo=certo", "titulo"), "certo"))
+    check("form: valor vazio continua vazio",
+      String.eq(Http.form("titulo=&feito=1", "titulo"), ""))
+    check("form: % solto no fim nao inventa byte",
+      String.eq(Http.form("t=ab%", "t"), "ab"))
+    check("form: serve tambem para a query string",
+      String.eq(Http.form("a=1&b=2", "b"), "2"))
+    check("form: a query da request chega em Http.query",
+      String.eq(query.of(Http.parse(
+        "GET /x?pagina=2 HTTP/1.1\r\nHost: x\r\n\r\n")), "pagina=2"))
 
 # Router
 # ------
@@ -363,6 +403,7 @@ def main() -> IO(Unit):
   do IO<Unit>:
     test_parse()
     test_render()
+    test_form()
     test_router()
     test_pg_frame()
     test_b64()
