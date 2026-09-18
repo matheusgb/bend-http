@@ -1,0 +1,248 @@
+# bend-http -- cliente Postgres, protocolo v3.
+#
+# A String aqui e sequencia de byte, um char por byte, do jeito que raw.bend
+# poe no fio. Toda mensagem do protocolo tem tag de 1 byte, tamanho de 4 bytes
+# big endian (contando os proprios 4) e corpo. A mensagem de startup e a unica
+# sem tag.
+import Base
+
+type Msg is Data:
+  Msg{tag: Char, body: String}
+
+type Taken is Data:
+  Taken{msg: Msg, rest: String}
+
+# Bytes e inteiros
+# ----------------
+
+def byte_at(x: U32, sh: Nat) -> Char:
+  Chr{U32.and(U32.shrn(x, sh), 255)}
+
+def u32be(+x: U32) -> String:
+  SCon{byte_at(x, 24n),
+    SCon{byte_at(x, 16n), SCon{byte_at(x, 8n), SCon{byte_at(x, 0n), SNil{}}}}}
+
+def be32.go(s: String, acc: U32) -> U32:
+  match s:
+    case SNil{}:
+      acc
+    case SCon{c, t}:
+      be32.go(t, U32.or(U32.shln(acc, 8n), Char.to_u32(c)))
+
+def be32(s: String) -> U32:
+  be32.go(String.take(s, 4n), 0)
+
+# Texto terminado em zero, como o protocolo pede.
+def cstr(s: String) -> String:
+  s ++ SCon{Chr{0}, SNil{}}
+
+# Monta mensagem
+# --------------
+
+# O tamanho conta os 4 bytes do proprio tamanho, e nao conta a tag.
+def frame(tag: Char, +body: String) -> String:
+  SCon{tag, u32be(U32.add(U32.from_nat(String.length(body)), 4))}
+    ++ body
+
+def startup.pack(+body: String) -> String:
+  u32be(U32.add(U32.from_nat(String.length(body)), 4)) ++ body
+
+
+# Startup nao tem tag: tamanho, versao 3.0 e os pares chave/valor.
+def startup(user: String, db: String) -> String:
+  startup.pack(u32be(196608) ++ cstr("user") ++ cstr(user)
+    ++ cstr("database") ++ cstr(db) ++ SCon{Chr{0}, SNil{}})
+
+def query(sql: String) -> String:
+  frame('Q', cstr(sql))
+
+# Le mensagem
+# -----------
+
+# Uma mensagem inteira, se ela couber no que ja chegou. Devolve tambem o que
+# sobrou, porque uma leitura traz varias mensagens.
+def take.cut(+want: Nat, +buf: String, tag: Char) -> Maybe<&2, Taken>:
+  Some{Taken{Msg{tag, String.take(String.drop(buf, 5n), Nat.sub(want, 5n))},
+    String.drop(buf, want)}}
+
+def take.at(fits: Bool, want: Nat, buf: String, tag: Char) ->
+  Maybe<&2, Taken>:
+  match fits:
+    case True{}:
+      take.cut(want, buf, tag)
+    case False{}:
+      None{}
+
+def take.len(+buf: String, tag: Char) -> Maybe<&2, Taken>:
+  take.at(Nat.is_ge(String.length(buf),
+    Nat.add(U32.to_nat(be32(String.drop(buf, 1n))), 1n)),
+    Nat.add(U32.to_nat(be32(String.drop(buf, 1n))), 1n), buf, tag)
+
+def take(buf: String) -> Maybe<&2, Taken>:
+  match buf:
+    case SNil{}:
+      None{}
+    case SCon{+tag, t}:
+      take.len(SCon{tag, t}, tag)
+
+# Base64
+# ------
+#
+# O SCRAM carrega salt e prova em base64, entao a conversao precisa existir
+# nos dois backends. Em Bend ela e pura e testavel; em efeito nativo, ela seria
+# escrita duas vezes.
+
+def b64.alpha() -> String:
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+def b64.at(m: Maybe<&2, Char>) -> Char:
+  match m:
+    case None{}:
+      '='
+    case Some{c}:
+      c
+
+def b64.chr(i: U32) -> Char:
+  b64.at(String.get(b64.alpha(), U32.to_nat(i)))
+
+def b64.six(+x: U32, sh: Nat) -> Char:
+  b64.chr(U32.and(U32.shrn(x, sh), 63))
+
+def b64.pack3(+x: U32) -> String:
+  SCon{b64.six(x, 18n), SCon{b64.six(x, 12n),
+    SCon{b64.six(x, 6n), SCon{b64.six(x, 0n), SNil{}}}}}
+
+def b64.pack2(+x: U32) -> String:
+  SCon{b64.six(x, 18n), SCon{b64.six(x, 12n),
+    SCon{b64.six(x, 6n), SCon{'=', SNil{}}}}}
+
+def b64.pack1(+x: U32) -> String:
+  SCon{b64.six(x, 18n), SCon{b64.six(x, 12n), SCon{'=', SCon{'=', SNil{}}}}}
+
+# Tres bytes viram quatro chars. Sobrando um ou dois bytes, o resto vira '='.
+def b64.one(a: Char, b: Char, t2: String, rest: String -> String) -> String:
+  match t2:
+    case SNil{}:
+      b64.pack2(U32.or(U32.shln(Char.to_u32(a), 16n),
+        U32.shln(Char.to_u32(b), 8n)))
+    case SCon{+c, t3}:
+      b64.pack3(U32.or(U32.or(U32.shln(Char.to_u32(a), 16n),
+        U32.shln(Char.to_u32(b), 8n)), Char.to_u32(c))) ++ rest(t3)
+
+def b64.two(a: Char, t: String, rest: String -> String) -> String:
+  match t:
+    case SNil{}:
+      b64.pack1(U32.shln(Char.to_u32(a), 16n))
+    case SCon{+b, t2}:
+      b64.one(a, b, t2, rest)
+
+def b64.three(s: String, rest: String -> String) -> String:
+  match s:
+    case SNil{}:
+      SNil{}
+    case SCon{+a, t}:
+      b64.two(a, t, rest)
+
+# O fuel conta grupos de tres bytes. Ele so existe porque a recursao anda tres
+# passos de uma vez, e o checador de terminacao exige um argumento que encolhe.
+def b64.enc.go(fuel: Nat, s: String) -> String:
+  match fuel:
+    case 0n:
+      SNil{}
+    case 1n++f:
+      b64.three(s, r => b64.enc.go(f, r))
+
+def b64.enc(+s: String) -> String:
+  b64.enc.go(Nat.add(String.length(s), 1n), s)
+
+def b64.idx.at(hit: Bool, i: U32, rest: U32) -> U32:
+  match hit:
+    case True{}:
+      i
+    case False{}:
+      rest
+
+
+# Decodificacao: o indice do char no alfabeto, ou 0 para '=' e lixo.
+def b64.idx.go(al: String, +c: Char, +i: U32) -> U32:
+  match al:
+    case SNil{}:
+      0
+    case SCon{+h, t}:
+      b64.idx.at(Char.is_eq(h, c), i, b64.idx.go(t, c, U32.add(i, 1)))
+
+def b64.idx(c: Char) -> U32:
+  b64.idx.go(b64.alpha(), c, 0)
+
+def b64.out(+x: U32, keep: Nat) -> String:
+  match keep:
+    case 0n:
+      SNil{}
+    case 1n:
+      SCon{byte_at(x, 16n), SNil{}}
+    case 2n:
+      SCon{byte_at(x, 16n), SCon{byte_at(x, 8n), SNil{}}}
+    case _:
+      SCon{byte_at(x, 16n),
+        SCon{byte_at(x, 8n), SCon{byte_at(x, 0n), SNil{}}}}
+
+def b64.keep.at(c_pad: Bool, d_pad: Bool) -> Nat:
+  match c_pad d_pad:
+    case True{} _:
+      1n
+    case False{} True{}:
+      2n
+    case False{} False{}:
+      3n
+
+
+# Quantos bytes o grupo carrega: '=' no fim tira um byte cada.
+def b64.keep(c: Char, d: Char) -> Nat:
+  b64.keep.at(Char.is_eq(c, '='), Char.is_eq(d, '='))
+
+def b64.quad(a: Char, b: Char, +c: Char, +d: Char, t: String,
+  rest: String -> String) -> String:
+  b64.out(U32.or(U32.or(U32.shln(b64.idx(a), 18n),
+    U32.shln(b64.idx(b), 12n)),
+    U32.or(U32.shln(b64.idx(c), 6n), b64.idx(d))),
+    b64.keep(c, d)) ++ rest(t)
+
+def b64.dec.4(a: Char, b: Char, +c: Char, s: String, rest: String -> String) ->
+  String:
+  match s:
+    case SNil{}:
+      SNil{}
+    case SCon{+d, t}:
+      b64.quad(a, b, c, d, t, rest)
+
+def b64.dec.3(a: Char, b: Char, s: String, rest: String -> String) -> String:
+  match s:
+    case SNil{}:
+      SNil{}
+    case SCon{+c, t}:
+      b64.dec.4(a, b, c, t, rest)
+
+def b64.dec.2(a: Char, s: String, rest: String -> String) -> String:
+  match s:
+    case SNil{}:
+      SNil{}
+    case SCon{+b, t}:
+      b64.dec.3(a, b, t, rest)
+
+def b64.dec.1(s: String, rest: String -> String) -> String:
+  match s:
+    case SNil{}:
+      SNil{}
+    case SCon{+a, t}:
+      b64.dec.2(a, t, rest)
+
+def b64.dec.go(fuel: Nat, s: String) -> String:
+  match fuel:
+    case 0n:
+      SNil{}
+    case 1n++f:
+      b64.dec.1(s, r => b64.dec.go(f, r))
+
+# Grupo incompleto no fim vira nada: base64 quebrado nao vira byte inventado.
+def b64.dec(+s: String) -> String:
+  b64.dec.go(Nat.add(String.length(s), 1n), s)

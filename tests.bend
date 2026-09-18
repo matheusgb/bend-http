@@ -3,6 +3,7 @@
 # Rode: bend tests.bend
 import Base
 import ./http.bend as Http
+import ./pg.bend as Pg
 
 def check(name: String, ok: Bool) -> IO(Unit):
   match ok:
@@ -10,6 +11,14 @@ def check(name: String, ok: Bool) -> IO(Unit):
       IO.print("ok    " ++ name)
     case False{}:
       IO.die(Unit, 1, "FALHOU " ++ name)
+
+# Os bytes 0, 1, ... n-1, nessa ordem.
+def bytes(n: Nat, acc: String) -> String:
+  match n:
+    case 0n:
+      acc
+    case 1n++p:
+      bytes(p, SCon{Chr{U32.from_nat(p)}, acc})
 
 # Leitores de campo, para o teste falar de um campo por vez.
 def val(p: Map<&2, String> & String) -> String:
@@ -139,8 +148,74 @@ def test_router() -> IO(Unit):
     check_route("router: rota inexistente sai 404",
       req_of("GET", "/nada"), "404 nao encontrado")
 
+# Postgres: enquadramento e base64
+# --------------------------------
+
+def took.msg(m: Pg.Msg, want_tag: Char, want_body: String) -> Bool:
+  match m:
+    case Pg.Msg{tag, body}:
+      Bool.and(Char.is_eq(tag, want_tag), String.eq(body, want_body))
+
+def took.at(t: Pg.Taken, want_tag: Char, want_body: String,
+  want_rest: String) -> Bool:
+  match t:
+    case Pg.Taken{msg, rest}:
+      Bool.and(took.msg(msg, want_tag, want_body), String.eq(rest, want_rest))
+
+def took(m: Maybe<&2, Pg.Taken>, want_tag: Char, want_body: String,
+  want_rest: String) -> Bool:
+  match m:
+    case None{}:
+      False{}
+    case Some{t}:
+      took.at(t, want_tag, want_body, want_rest)
+
+def nada(m: Maybe<&2, Pg.Taken>) -> Bool:
+  match m:
+    case None{}:
+      True{}
+    case Some{t}:
+      False{}
+
+def test_pg_frame() -> IO(Unit):
+  do IO<Unit>:
+    check("pg: be32 desfaz u32be",
+      U32.is_eq(Pg.be32(Pg.u32be(196608)), 196608))
+    check("pg: be32 desfaz u32be no maximo",
+      U32.is_eq(Pg.be32(Pg.u32be(4294967295)), 4294967295))
+    check("pg: o tamanho da mensagem conta os 4 bytes dele mesmo",
+      U32.is_eq(Pg.be32(String.drop(Pg.query("oi"), 1n)), 7))
+    check("pg: take devolve a mensagem e o que sobrou",
+      took(Pg.take(Pg.frame('R', "ab") ++ "sobra"), 'R', "ab", "sobra"))
+    check("pg: take nao inventa mensagem cortada pela metade",
+      nada(Pg.take(String.take(Pg.frame('R', "abcdef"), 5n))))
+    check("pg: take de buffer vazio nao inventa mensagem",
+      nada(Pg.take("")))
+
+# Vetores da RFC 4648.
+def test_b64() -> IO(Unit):
+  do IO<Unit>:
+    check("b64: vazio", String.eq(Pg.b64.enc(""), ""))
+    check("b64: f", String.eq(Pg.b64.enc("f"), "Zg=="))
+    check("b64: fo", String.eq(Pg.b64.enc("fo"), "Zm8="))
+    check("b64: foo", String.eq(Pg.b64.enc("foo"), "Zm9v"))
+    check("b64: foob", String.eq(Pg.b64.enc("foob"), "Zm9vYg=="))
+    check("b64: fooba", String.eq(Pg.b64.enc("fooba"), "Zm9vYmE="))
+    check("b64: foobar", String.eq(Pg.b64.enc("foobar"), "Zm9vYmFy"))
+    check("b64: decodifica de volta, com padding de um",
+      String.eq(Pg.b64.dec("Zm9vYmE="), "fooba"))
+    check("b64: decodifica de volta, com padding de dois",
+      String.eq(Pg.b64.dec("Zg=="), "f"))
+    check("b64: decodifica de volta, sem padding",
+      String.eq(Pg.b64.dec("Zm9vYmFy"), "foobar"))
+    check("b64: byte alto sobrevive a ida e volta",
+      String.eq(Pg.b64.dec(Pg.b64.enc(bytes(256n, SNil{}))),
+        bytes(256n, SNil{})))
+
 def main() -> IO(Unit):
   do IO<Unit>:
     test_parse()
     test_render()
     test_router()
+    test_pg_frame()
+    test_b64()
