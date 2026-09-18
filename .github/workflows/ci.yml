@@ -23,7 +23,9 @@ jobs:
       - name: binario nativo
         run: |
           mkdir -p out
+          bend tests.bend -o out/tests
           bend wire.bend -o out/wire
           bend example.bend -o out/app
+          ./out/tests
           python3 wire_test.py out/wire
           python3 http_test.py out/app

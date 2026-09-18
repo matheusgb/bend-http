@@ -4,6 +4,7 @@
 import Base
 import ./http.bend as Http
 import ./pg.bend as Pg
+import ./crypto.bend as Crypto
 
 def check(name: String, ok: Bool) -> IO(Unit):
   match ok:
@@ -212,6 +213,68 @@ def test_b64() -> IO(Unit):
       String.eq(Pg.b64.dec(Pg.b64.enc(bytes(256n, SNil{}))),
         bytes(256n, SNil{})))
 
+# Cripto: vetores do NIST e das RFC 4231 e 7914
+# --------------------------------------------
+
+def hex.at(m: Maybe<&2, Char>) -> Char:
+  match m:
+    case None{}:
+      '?'
+    case Some{c}:
+      c
+
+def hex.chr(i: U32) -> Char:
+  hex.at(String.get("0123456789abcdef", U32.to_nat(i)))
+
+def hex(s: String) -> String:
+  match s:
+    case SNil{}:
+      SNil{}
+    case SCon{+c, t}:
+      SCon{hex.chr(U32.shrn(Char.to_u32(c), 4n)),
+        SCon{hex.chr(U32.and(Char.to_u32(c), 15)), hex(t)}}
+
+# O byte 0x0b repetido, que e a chave do primeiro caso da RFC 4231.
+def rep(n: Nat, +c: Char, acc: String) -> String:
+  match n:
+    case 0n:
+      acc
+    case 1n++p:
+      rep(p, c, SCon{c, acc})
+
+def test_crypto() -> IO(Unit):
+  do IO<Unit>:
+    a : String <- Crypto.sha256("abc")
+    check("sha256: vetor abc do NIST", String.eq(hex(a),
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"))
+    b : String <- Crypto.sha256("")
+    check("sha256: vetor vazio do NIST", String.eq(hex(b),
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"))
+    c : String <- Crypto.sha256(rep(1000n, 'a', SNil{}))
+    check("sha256: mil bytes, mais de um bloco", String.eq(hex(c),
+      "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3"))
+    d : String <- Crypto.hmac256(rep(20n, Chr{11}, SNil{}), "Hi There")
+    check("hmac256: caso 1 da RFC 4231", String.eq(hex(d),
+      "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"))
+    e : String <- Crypto.hmac256("Jefe", "what do ya want for nothing?")
+    check("hmac256: caso 2 da RFC 4231", String.eq(hex(e),
+      "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"))
+    f : String <- Crypto.hmac256(rep(131n, Chr{170}, SNil{}),
+      "Test Using Larger Than Block-Size Key - Hash Key First")
+    check("hmac256: caso 6 da RFC 4231, chave maior que o bloco",
+      String.eq(hex(f),
+        "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"))
+    g : String <- Crypto.pbkdf2("password", "salt", 1)
+    check("pbkdf2: uma volta", String.eq(hex(g),
+      "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b"))
+    h : String <- Crypto.pbkdf2("password", "salt", 4096)
+    check("pbkdf2: 4096 voltas, que e o padrao do Postgres",
+      String.eq(hex(h),
+        "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a"))
+    i : String <- Crypto.nonce(18)
+    check("nonce: devolve o tamanho pedido",
+      Nat.is_eq(String.length(i), 18n))
+
 def main() -> IO(Unit):
   do IO<Unit>:
     test_parse()
@@ -219,3 +282,4 @@ def main() -> IO(Unit):
     test_router()
     test_pg_frame()
     test_b64()
+    test_crypto()
