@@ -11,6 +11,6 @@ jobs:
           curl -fsSL https://bend-lang.com/install.sh | sh
           echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
       - name: checa cada arquivo sozinho
-        run: bend tests.bend --checkup
-      - name: testes
-        run: bend tests.bend
+        run: bend wire.bend --checkup
+      - name: teste de fio
+        run: python3 wire_test.py

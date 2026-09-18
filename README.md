@@ -26,7 +26,7 @@ Estado: em construção. Nada aqui é estável ainda.
 
 ```bash
 curl -fsSL https://bend-lang.com/install.sh | sh   # instala o Bend
-bend tests.bend                                    # testes
+python3 wire_test.py                               # teste de fio
 bend example.bend                                  # sobe o exemplo na 8080
 ```
 
@@ -35,6 +35,9 @@ bend example.bend                                  # sobe o exemplo na 8080
 - `laws.bend` guarda as provas. O checker do Bend recusa uma lei que não fecha,
   então prova quebrada quebra o build.
 - `tests.bend` sai com código diferente de zero quando um caso falha.
+- `wire_test.py` checa o byte no fio contra um peer que não fala Bend. Teste de
+  Bend contra Bend não serve aqui: ida e volta por UTF-8 também é reversível
+  entre dois Bend, então ele passaria com o TCP errado.
 - O Bend não tem ferramenta de cobertura. O CI checa que todo `def` público
   aparece em `tests.bend`. Isso é cobertura de nome, não de caminho: garante que
   nenhuma função pública ficou sem teste, não que todo ramo foi exercitado.
