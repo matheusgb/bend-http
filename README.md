@@ -26,14 +26,17 @@ Estado: em construção. Nada aqui é estável ainda.
 
 ```bash
 curl -fsSL https://bend-lang.com/install.sh | sh   # instala o Bend
+bend tests.bend                                    # testes puros
 python3 wire_test.py                               # teste de fio
 bend example.bend                                  # sobe o exemplo na 8080
 ```
 
 ## Rigor
 
-- `laws.bend` guarda as provas. O checker do Bend recusa uma lei que não fecha,
-  então prova quebrada quebra o build.
+- `LAWS.bend` guarda as provas, e o checker recusa lei que não fecha. Ele ainda
+  não existe: prova em Bend paga sobre estrutura recursiva (`Nat`, `List`,
+  `String`), e trava sobre comparação de `U32` ou literal de texto, que não
+  reduzem com valor simbólico. Ele nasce no router, onde a indução é natural.
 - `tests.bend` sai com código diferente de zero quando um caso falha.
 - `wire_test.py` checa o byte no fio contra um peer que não fala Bend. Teste de
   Bend contra Bend não serve aqui: ida e volta por UTF-8 também é reversível
