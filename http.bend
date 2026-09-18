@@ -94,8 +94,8 @@ def heads(ls: List<&2, String>, m: Map<&2, String>) -> Map<&2, String>:
 def target(method: String, p: String & String, m: Map<&2, String>,
   body: String) -> Maybe<&2, Req>:
   match p:
-    case Tuple{path, query}:
-      Some{Req{method, path, query, m, body, Map.new(&2, String)}}
+    case Tuple{path, q}:
+      Some{Req{method, path, q, m, body, Map.new(&2, String)}}
 
 def line.target(method: String, rest: List<&2, String>,
   m: Map<&2, String>, body: String) -> Maybe<&2, Req>:
@@ -229,13 +229,13 @@ def val(p: Map<&2, String> & String) -> String:
 
 def param(r: Req, name: String) -> String:
   match r:
-    case Req{method, path, query, hs, body, params}:
+    case Req{method, path, q, hs, body, params}:
       val(Map.get(String, "", params, name))
 
 # Leitores, para o handler nao precisar abrir o Req na mao.
 def body(r: Req) -> String:
   match r:
-    case Req{method, path, query, hs, b, params}:
+    case Req{method, path, q, hs, b, params}:
       b
 
 def query(r: Req) -> String:
@@ -245,13 +245,13 @@ def query(r: Req) -> String:
 
 def header(r: Req, name: String) -> String:
   match r:
-    case Req{method, path, query, hs, b, params}:
+    case Req{method, path, q, hs, b, params}:
       val(Map.get(String, "", hs, name))
 
 def with_params(r: Req, ps: Map<&2, String>) -> Req:
   match r:
-    case Req{method, path, query, hs, b, old}:
-      Req{method, path, query, hs, b, ps}
+    case Req{method, path, q, hs, b, old}:
+      Req{method, path, q, hs, b, ps}
 
 # Um segmento de padrao que comeca com : casa com qualquer coisa e guarda o
 # valor. Qualquer outro segmento precisa ser igual.
@@ -329,9 +329,9 @@ def route.pick(rs: List<&1, Route>, +method: String, +ss: List<&2, String>,
 
 def route(rs: List<&1, Route>, req: Req) -> IO(Res):
   match req:
-    case Req{+method, +path, query, hs, b, params}:
+    case Req{+method, +path, q, hs, b, params}:
       route.pick(rs, method, String.split(path, '/'),
-        Req{method, path, query, hs, b, params})
+        Req{method, path, q, hs, b, params})
 
 def get(pattern: String, run: @+r: Req -> IO(Res)) -> Route:
   Route{"GET", pattern, run}
@@ -357,7 +357,7 @@ def want_len(h: Map<&2, String>) -> Nat:
 
 def complete.len(r: Req) -> Bool:
   match r:
-    case Req{method, path, query, hs, b, params}:
+    case Req{method, path, q, hs, b, params}:
       Nat.is_ge(String.length(b), want_len(hs))
 
 def complete.body(m: Maybe<&2, Req>) -> Bool:
