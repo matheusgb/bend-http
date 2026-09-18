@@ -8,8 +8,10 @@ import Base
 
 def send(sock: Socket, data: String) ->
   IO(Socket & Result<&1, &1, U32 & String, Unit>):
+  import "./effs/raw_send.c"
   import "./effs/raw_send.js"
 
 def recv(sock: Socket, max: U32) ->
   IO(Socket & Result<&1, &1, U32 & String, String>):
+  import "./effs/raw_recv.c"
   import "./effs/raw_recv.js"

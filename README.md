@@ -29,6 +29,7 @@ curl -fsSL https://bend-lang.com/install.sh | sh   # instala o Bend
 bend tests.bend                                    # testes puros
 python3 wire_test.py                               # teste de fio
 bend example.bend                                  # sobe o exemplo na 8080
+bend example.bend -o out/app                       # binario nativo, precisa de clang
 ```
 
 ## Rigor

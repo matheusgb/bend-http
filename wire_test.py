@@ -5,7 +5,8 @@ O peer aqui nao fala Bend. Ele manda os 256 bytes crus, le a resposta e
 compara. O TCP da Base falha este teste: ele recodifica a saida em UTF-8 e
 troca byte invalido por U+FFFD na entrada.
 
-Rode: python3 wire_test.py
+Rode: python3 wire_test.py            # pelo bend, backend JS
+      python3 wire_test.py ./out     # por um binario nativo ja compilado
 """
 import socket
 import subprocess
@@ -20,8 +21,9 @@ srv.bind(("127.0.0.1", PORT))
 srv.listen(1)
 srv.settimeout(30)
 
-peer = subprocess.Popen(["bend", "wire.bend"],
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+cmd = sys.argv[1:] or ["bend", "wire.bend"]
+peer = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+back = b""
 try:
     conn, _ = srv.accept()
     conn.settimeout(30)
@@ -33,9 +35,15 @@ try:
             break
         back += part
     conn.close()
+except socket.timeout:
+    peer.kill()
+    print("FALHOU wire: o peer %s nao conectou" % cmd, file=sys.stderr)
+    print(peer.stderr.read().decode(), file=sys.stderr)
+    sys.exit(1)
 finally:
     srv.close()
-    peer.wait(timeout=30)
+
+peer.wait(timeout=30)
 
 if back != PAYLOAD:
     print("FALHOU wire: o byte voltou diferente", file=sys.stderr)
@@ -46,4 +54,4 @@ if back != PAYLOAD:
     print(peer.stderr.read().decode(), file=sys.stderr)
     sys.exit(1)
 
-print("ok    wire: os 256 bytes atravessam o fio sem mudar")
+print("ok    wire: os 256 bytes atravessam o fio sem mudar (%s)" % cmd[0])
