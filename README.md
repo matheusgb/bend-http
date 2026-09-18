@@ -82,6 +82,16 @@ Http.form(Http.query(r), "pagina")
 
 Campo ausente e campo vazio dão a mesma resposta: texto vazio.
 
+## Montar JSON
+
+`Http.jstr` devolve o texto já entre aspas, com `"`, `\` e byte de controle
+escapados. Sem ele, um valor com aspas quebra o JSON inteiro, e o valor quase
+sempre vem de fora:
+
+```python
+Http.json(200, "{\"titulo\":" ++ Http.jstr(titulo) ++ "}")
+```
+
 ## Injeção de SQL
 
 A v1 monta query em texto, sem bind de parâmetro. O risco de injeção é seu.
@@ -126,16 +136,28 @@ que joga limpo, para o teste não passar por acidente.
 `String` nesta biblioteca é sequência de byte, um char por byte. O `String` do
 Bend é sequência de codepoint. Para ASCII os dois coincidem; para o resto, não.
 
-Passe todo texto com acento por `Raw.utf8` antes de mandar:
+`Raw.utf8` converte codepoint em byte. Use em **literal escrito no seu código**,
+e só nele:
 
 ```python
-Db.query(conn, Raw.utf8("select 'ação'"))
-Http.text(200, Raw.utf8("não achei"))
+Http.text(200, Raw.utf8("não achei"))         # certo: literal do código
+Db.query(conn, Raw.utf8("select 'ação'"))     # certo: literal do código
 ```
 
-Sem isso, o `ç` sai como um byte só, e o Postgres recusa a query. O caminho de
-volta, byte UTF-8 para codepoint, ainda não existe: ele nasce quando alguma
-rota precisar olhar caractere de um corpo acentuado.
+Nunca passe por `Raw.utf8` um texto que veio do fio. O corpo da request, o
+campo de formulário e a linha do Postgres já chegam em byte UTF-8: encodar de
+novo transforma `ção` em `Ã§Ã£o`.
+
+```python
+Db.query(conn, "insert into t (nome) values "     # certo: tudo ASCII e byte
+  ++ Pg.lit(Http.form(Http.body(r), "nome")))     # que veio do fio
+
+Db.query(conn, Raw.utf8("insert into t ..."       # ERRADO: encoda de novo o
+  ++ Pg.lit(Http.form(Http.body(r), "nome"))))    # que veio do fio
+```
+
+O caminho de volta, byte UTF-8 para codepoint, ainda não existe: ele nasce
+quando alguma rota precisar olhar caractere de um corpo acentuado.
 
 ## Escrever um handler
 

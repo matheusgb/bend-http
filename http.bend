@@ -520,3 +520,67 @@ def form.one(ls: List<&2, String>, +name: String) -> String:
 # Campo ausente vira texto vazio: a v1 nao separa ausente de vazio.
 def form(s: String, +name: String) -> String:
   form.one(String.split(s, '&'), name)
+
+# Texto dentro de JSON
+# --------------------
+#
+# Um valor com aspas quebra o JSON inteiro, e o valor costuma vir de fora.
+# jstr devolve o texto ja entre aspas, com o que precisa escapado. Byte acima
+# de 0x7F passa direto, porque o corpo ja sai em UTF-8.
+
+def hex.digit.at(m: Maybe<&2, Char>) -> Char:
+  match m:
+    case None{}:
+      '0'
+    case Some{c}:
+      c
+
+def hex.digit(i: U32) -> Char:
+  hex.digit.at(String.get("0123456789abcdef", U32.to_nat(i)))
+
+def jstr.u(+c: U32, acc: String) -> String:
+  SCon{hex.digit(U32.and(c, 15)),
+    SCon{hex.digit(U32.and(U32.shrn(c, 4n), 15)),
+      SCon{'0', SCon{'0', SCon{'u', SCon{'\\', acc}}}}}}
+
+def jstr.pick(dois: Bool, letra: Char, +c: Char, ctrl: Bool, acc: String) ->
+  String:
+  match dois ctrl:
+    case True{} _:
+      SCon{letra, SCon{'\\', acc}}
+    case False{} True{}:
+      jstr.u(Char.to_u32(c), acc)
+    case False{} False{}:
+      SCon{c, acc}
+
+def jstr.letra.at(n: Bool, r: Bool, t: Bool, +c: Char) -> Char:
+  match n r t:
+    case True{} _ _:
+      'n'
+    case False{} True{} _:
+      'r'
+    case False{} False{} True{}:
+      't'
+    case False{} False{} False{}:
+      c
+
+def jstr.letra(+c: Char) -> Char:
+  jstr.letra.at(Char.is_eq(c, Chr{10}), Char.is_eq(c, Chr{13}),
+    Char.is_eq(c, Chr{9}), c)
+
+# Qual escape este char pede.
+def jstr.one(+c: Char, acc: String) -> String:
+  jstr.pick(Bool.or(Bool.or(Char.is_eq(c, '"'), Char.is_eq(c, '\\')),
+      Bool.or(Bool.or(Char.is_eq(c, Chr{10}), Char.is_eq(c, Chr{13})),
+        Char.is_eq(c, Chr{9}))),
+    jstr.letra(c), c, U32.is_lt(Char.to_u32(c), 32), acc)
+
+def jstr.go(s: String, acc: String) -> String:
+  match s:
+    case SNil{}:
+      String.reverse(acc)
+    case SCon{+c, t}:
+      jstr.go(t, jstr.one(c, acc))
+
+def jstr(s: String) -> String:
+  "\"" ++ jstr.go(s, SNil{}) ++ "\""

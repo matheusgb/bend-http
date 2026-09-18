@@ -155,6 +155,28 @@ def test_form() -> IO(Unit):
       String.eq(query.of(Http.parse(
         "GET /x?pagina=2 HTTP/1.1\r\nHost: x\r\n\r\n")), "pagina=2"))
 
+# Texto dentro de JSON
+# --------------------
+
+def test_jstr() -> IO(Unit):
+  do IO<Unit>:
+    check("jstr: texto simples ganha aspas",
+      String.eq(Http.jstr("oi"), "\"oi\""))
+    check("jstr: aspa no valor nao fecha a string",
+      String.eq(Http.jstr("ler \"o cortico\""),
+        "\"ler \\\"o cortico\\\"\""))
+    check("jstr: barra invertida dobra",
+      String.eq(Http.jstr("c:\\tmp"), "\"c:\\\\tmp\""))
+    check("jstr: quebra de linha vira \\n",
+      String.eq(Http.jstr(SCon{'a', SCon{Chr{10}, "b"}}), "\"a\\nb\""))
+    check("jstr: tab vira \\t",
+      String.eq(Http.jstr(SCon{Chr{9}, SNil{}}), "\"\\t\""))
+    check("jstr: byte de controle vira \\u00XX",
+      String.eq(Http.jstr(SCon{Chr{1}, SNil{}}), "\"\\u0001\""))
+    check("jstr: byte de utf8 passa direto, porque o corpo ja e utf8",
+      String.eq(Http.jstr(SCon{Chr{195}, SCon{Chr{167}, SNil{}}}),
+        SCon{'"', SCon{Chr{195}, SCon{Chr{167}, "\""}}}))
+
 # Router
 # ------
 
@@ -404,6 +426,7 @@ def main() -> IO(Unit):
     test_parse()
     test_render()
     test_form()
+    test_jstr()
     test_router()
     test_pg_frame()
     test_b64()
